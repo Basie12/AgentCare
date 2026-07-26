@@ -1,0 +1,80 @@
+{% extends "base.html" %}{% block content %}
+<h1>Request detail</h1>
+
+{% if run.status.value == 'blocked' %}
+<div class="banner stop"><strong>Stopped by the safety agent.</strong> {{ state.get('final_message') }}</div>
+{% elif run.status.value == 'awaiting_approval' %}
+<div class="banner warn"><strong>Waiting for hospital staff.</strong>
+{{ state.get('approval_reason') }} The workflow is paused at a checkpoint and will resume once a decision is recorded.</div>
+{% endif %}
+
+<div class="card">
+  <h2>Summary</h2>
+  <p>{{ state.get('final_message') or 'In progress.' }}</p>
+  <table>
+    <tr><th>Request</th><td>{{ run.request_text }}</td></tr>
+    <tr><th>Status</th><td><span class="tag {% if run.status.value=='completed' %}ok{% elif run.status.value=='blocked' %}stop{% else %}warn{% endif %}">{{ run.status.value }}</span>
+      {% if run.degraded %}<span class="tag warn">degraded — deterministic fallback</span>{% endif %}</td></tr>
+    <tr><th>Safety verdict</th><td>{{ state.get('safety_verdict') }} {% if state.get('safety_rule') %}<code>{{ state.get('safety_rule') }}</code>{% endif %}</td></tr>
+    <tr><th>Department</th><td>{{ state.get('department') or '—' }}
+      <span class="muted">confidence {{ '%.2f'|format(state.get('routing_confidence') or 0) }}</span></td></tr>
+    {% set tf = state.get('timeframe') or {} %}
+    {% if tf.get('specified') %}
+    <tr><th>Requested timing</th><td>{{ tf.get('label') }}
+      {% if state.get('appointment') %}
+        {% if state.get('appointment').get('timeframe_honoured') %}
+          <span class="tag ok">met</span>
+        {% else %}
+          <span class="tag warn">not available</span>
+        {% endif %}
+      {% endif %}
+      {% if state.get('timeframe_note') %}<div class="muted">{{ state.get('timeframe_note') }}</div>{% endif %}
+    </td></tr>
+    {% endif %}
+    {% if state.get('appointment') %}
+    <tr><th>Booked for</th><td><strong>{{ state.get('appointment').get('start_display') or state.get('appointment').get('start_time') }}</strong>
+      — {{ state.get('appointment').get('doctor_name') }}</td></tr>
+    {% endif %}
+    {% if state.get('missing_documents') %}
+    <tr><th>Missing documents</th><td>{{ state.get('missing_documents')|join(', ') }}</td></tr>{% endif %}
+    {% if state.get('duplicates') %}
+    <tr><th>Duplicates skipped</th><td>{{ state.get('duplicates')|length }}</td></tr>{% endif %}
+    <tr><th>Thread</th><td class="mono">{{ run.thread_id }}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Agent trace</h2>
+  <p class="muted">Every node that executed, in order, with its own tools and timing.</p>
+  <table><tr><th>#</th><th>Agent</th><th>Latency</th><th>Model</th><th>Tokens</th><th>Output written to state</th></tr>
+  {% for t in traces %}<tr>
+    <td class="muted">{{ loop.index }}</td>
+    <td><strong>{{ t.agent_name }}</strong>{% if t.used_fallback %} <span class="tag warn">fallback</span>{% endif %}</td>
+    <td class="mono">{{ t.latency_ms }}ms</td>
+    <td class="muted">{{ t.llm_model or '—' }}</td>
+    <td class="muted">{{ t.prompt_tokens }}/{{ t.completion_tokens }}</td>
+    <td class="mono">{{ t.output_summary[:150] }}</td>
+  </tr>{% endfor %}</table>
+</div>
+
+<div class="card">
+  <h2>Tool invocations</h2>
+  <table><tr><th>Tool</th><th>Called by</th><th>Result</th><th>Latency</th></tr>
+  {% for t in tools %}<tr>
+    <td class="mono">{{ t.tool_name }}</td><td>{{ t.agent_name }}</td>
+    <td>{% if t.success %}<span class="tag ok">ok</span>{% else %}<span class="tag stop">failed</span>{% endif %}
+      <span class="mono muted">{{ t.result_summary[:90] }}</span></td>
+    <td class="mono">{{ t.latency_ms }}ms</td>
+  </tr>{% endfor %}</table>
+</div>
+
+{% if safety_events %}
+<div class="card">
+  <h2>Safety events</h2>
+  <table><tr><th>Layer</th><th>Rule</th><th>Severity</th><th>Action</th></tr>
+  {% for s in safety_events %}<tr>
+    <td class="mono">{{ s.layer }}</td><td><code>{{ s.rule }}</code></td>
+    <td><span class="tag stop">{{ s.severity }}</span></td><td>{{ s.action_taken }}</td>
+  </tr>{% endfor %}</table>
+</div>{% endif %}
+{% endblock %}

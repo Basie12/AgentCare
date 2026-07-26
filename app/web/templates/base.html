@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}AgentCare{% endblock %}</title>
+<style>
+:root{--ink:#12212e;--muted:#5b6b7a;--line:#dde5ec;--bg:#f6f8fa;--card:#fff;
+--ok:#0f7a52;--warn:#8a5a00;--stop:#b02020;--accent:#1b5e8c}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+color:var(--ink);background:var(--bg)}
+header{background:var(--ink);color:#fff;padding:.8rem 1.2rem;display:flex;
+justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.6rem}
+header a{color:#cfe3f2;text-decoration:none;margin-left:1rem}
+header .brand{font-weight:700;letter-spacing:.02em}
+main{max-width:1080px;margin:1.4rem auto;padding:0 1rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;
+padding:1.1rem;margin-bottom:1.1rem}
+h1{font-size:1.35rem;margin:.2rem 0 1rem} h2{font-size:1.05rem;margin:0 0 .7rem}
+h3{font-size:.9rem;margin:1.1rem 0 .4rem;color:var(--muted);
+text-transform:uppercase;letter-spacing:.06em}
+table{width:100%;border-collapse:collapse;font-size:.87rem}
+th,td{text-align:left;padding:.45rem .5rem;border-bottom:1px solid var(--line);
+vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:.78rem;text-transform:uppercase}
+textarea,input,select{width:100%;padding:.55rem;border:1px solid var(--line);
+border-radius:6px;font:inherit;background:#fff}
+button{background:var(--accent);color:#fff;border:0;border-radius:6px;
+padding:.55rem 1rem;font:inherit;font-weight:600;cursor:pointer}
+button.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+button.danger{background:var(--stop)}
+.tag{display:inline-block;padding:.12rem .5rem;border-radius:99px;font-size:.72rem;
+font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.tag.ok{background:#e3f5ed;color:var(--ok)}
+.tag.warn{background:#fdf1dc;color:var(--warn)}
+.tag.stop{background:#fbe6e6;color:var(--stop)}
+.tag.info{background:#e6f0f8;color:var(--accent)}
+.muted{color:var(--muted);font-size:.85rem}
+.row{display:flex;gap:1rem;flex-wrap:wrap}.row>*{flex:1;min-width:260px}
+.banner{padding:.8rem 1rem;border-radius:6px;margin-bottom:1rem;font-weight:500}
+.banner.stop{background:#fbe6e6;border:1px solid #f0bcbc;color:#7a1414}
+.banner.warn{background:#fdf1dc;border:1px solid #eccf9a;color:#6b4500}
+code{background:#eef2f5;padding:.1rem .3rem;border-radius:3px;font-size:.82rem}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">AgentCare</span>
+  <nav>
+    {% if user %}
+      <span class="muted" style="color:#9fc0d8">{{ user.name }} · {{ user.role.value }}</span>
+      <a href="/dashboard">Dashboard</a><a href="/logout">Sign out</a>
+    {% endif %}
+  </nav>
+</header>
+<main>{% block content %}{% endblock %}</main>
+</body></html>

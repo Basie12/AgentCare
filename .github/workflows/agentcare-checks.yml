@@ -1,0 +1,39 @@
+# Placeholder. REPLACE this file with the official workflow from:
+# https://careerapi-production.krishnaik.in/api/ci/hackathons/agentcare-build-challenge-2026/workflow.yml
+# Then add SUBMISSION_TOKEN under Settings -> Secrets and variables -> Actions.
+#
+# The job below mirrors the two critical checks locally so you catch failures
+# before pushing.
+name: agentcare-checks
+
+on: [push, pull_request]
+
+jobs:
+  local-mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Critical check 1 — all Python compiles
+        run: python -m compileall -q app tests
+
+      - name: Critical check 2 — an LLM client is declared
+        run: |
+          grep -Eiq '^(groq|openai|anthropic|langchain|langgraph|crewai|autogen)' requirements.txt \
+            && echo "LLM client found" \
+            || (echo "::error::no LLM client in requirements.txt" && exit 1)
+
+      - name: Advisory — .env is not committed
+        run: |
+          test ! -f .env && echo ".env not committed" || (echo "::error::.env is committed" && exit 1)
+
+      - name: Advisory — .env.example and README exist
+        run: test -f .env.example && test -f README.md
+
+      - name: Install and test
+        run: |
+          pip install -r requirements.txt
+          pytest -q

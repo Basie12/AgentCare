@@ -1,0 +1,63 @@
+{% extends "base.html" %}{% block content %}
+<h1>Staff console</h1>
+
+<div class="card">
+  <h2>Escalation queue <span class="tag {{ 'warn' if open_escalations else 'ok' }}">{{ open_escalations|length }} open</span></h2>
+  {% if open_escalations %}
+    {% for e in open_escalations %}
+    <div style="border:1px solid var(--line);border-radius:6px;padding:.9rem;margin-bottom:.8rem">
+      <p><span class="tag {{ 'stop' if e.severity in ['critical','high'] else 'warn' }}">{{ e.severity }}</span>
+         <span class="tag info">{{ e.category }}</span>
+         <span class="muted">{{ e.created_at.strftime('%d %b %H:%M') }}</span></p>
+      <p>{{ e.reason }}</p>
+      {% set run = run_map.get(e.workflow_run_id) %}
+      {% if run %}<p class="muted">Request: "{{ run.request_text[:120] }}"
+        — <a href="/workflow/{{ run.id }}">open workflow</a>
+        {% if run.status.value == 'awaiting_approval' %}<span class="tag warn">paused at checkpoint</span>{% endif %}</p>{% endif %}
+      <form method="post" action="/staff/escalation/{{ e.id }}">
+        <div class="row">
+          <div><h3>Override department (optional)</h3>
+            <input name="department" placeholder="e.g. General Medicine"></div>
+          <div><h3>Reviewer note</h3><input name="note" placeholder="Reason for the decision"></div>
+        </div>
+        <p>
+          <button type="submit" name="decision" value="approved">Approve and resume</button>
+          <button type="submit" name="decision" value="rejected" class="danger">Reject</button>
+        </p>
+      </form>
+    </div>
+    {% endfor %}
+  {% else %}<p class="muted">Nothing waiting for review.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>All workflows</h2>
+  <table><tr><th>Request</th><th>Step</th><th>Status</th><th></th></tr>
+  {% for r in runs %}<tr>
+    <td>{{ r.request_text[:60] }}…</td><td class="mono">{{ r.current_step }}</td>
+    <td><span class="tag {% if r.status.value=='completed' %}ok{% elif r.status.value=='blocked' %}stop{% else %}warn{% endif %}">{{ r.status.value }}</span></td>
+    <td><a href="/workflow/{{ r.id }}">View</a></td>
+  </tr>{% endfor %}</table>
+</div>
+
+<div class="card">
+  <h2>Audit log</h2>
+  <table><tr><th>When</th><th>Actor</th><th>Action</th><th>Entity</th></tr>
+  {% for a in audit %}<tr>
+    <td class="mono muted">{{ a.created_at.strftime('%H:%M:%S') }}</td>
+    <td>{{ a.actor_id[:10] if a.actor_id else 'system' }} <span class="muted">({{ a.actor_type }})</span></td>
+    <td class="mono">{{ a.action }}</td>
+    <td class="mono muted">{{ a.entity_type }}/{{ (a.entity_id or '')[:10] }}</td>
+  </tr>{% endfor %}</table>
+</div>
+
+<div class="card">
+  <h2>Resolved escalations</h2>
+  <table><tr><th>Category</th><th>Decision</th><th>Note</th></tr>
+  {% for e in resolved %}<tr>
+    <td>{{ e.category }}</td>
+    <td><span class="tag {{ 'ok' if e.status.value=='approved' else 'stop' }}">{{ e.status.value }}</span></td>
+    <td class="muted">{{ e.reviewer_note or '—' }}</td>
+  </tr>{% endfor %}</table>
+</div>
+{% endblock %}

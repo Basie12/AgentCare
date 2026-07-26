@@ -1,0 +1,61 @@
+{% extends "base.html" %}{% block content %}
+<h1>Your care admin</h1>
+
+<div class="card">
+  <h2>Submit a request</h2>
+  <p class="muted">Booking, rescheduling, documents and reminders. AgentCare cannot give medical advice.</p>
+  <form method="post" action="/patient/request" enctype="multipart/form-data">
+    <textarea name="request_text" rows="3" required
+      placeholder="e.g. I need a Cardiology follow-up next week and want to attach my old ECG."></textarea>
+    <h3>Attach documents (optional)</h3>
+    <input type="file" name="files" multiple>
+    <p><button type="submit">Submit request</button></p>
+  </form>
+</div>
+
+<div class="row">
+<div class="card">
+  <h2>Appointments</h2>
+  {% if appointments %}<table><tr><th>When</th><th>Doctor</th><th>Status</th></tr>
+  {% for appt, slot, doc in appointments %}<tr>
+    <td>{{ slot.start_time.strftime('%a %d %b, %H:%M') }}</td><td>{{ doc.name }}</td>
+    <td><span class="tag {{ 'ok' if appt.status.value in ['confirmed','rescheduled'] else 'warn' }}">{{ appt.status.value }}</span></td>
+  </tr>{% endfor %}</table>
+  {% else %}<p class="muted">Nothing booked yet.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Documents on file</h2>
+  {% if documents %}<table><tr><th>File</th><th>Type</th><th>Source</th></tr>
+  {% for d in documents %}<tr>
+    <td>{{ d.original_filename }}</td>
+    <td><span class="tag info">{{ d.document_type }}</span></td>
+    <td class="muted">{{ d.classified_by }} · {{ '%.2f'|format(d.classification_confidence) }}</td>
+  </tr>{% endfor %}</table>
+  {% else %}<p class="muted">No documents uploaded.</p>{% endif %}
+</div>
+</div>
+
+<div class="card">
+  <h2>Requests</h2>
+  {% if runs %}<table><tr><th>Request</th><th>Step</th><th>Status</th><th></th></tr>
+  {% for r in runs %}<tr>
+    <td>{{ r.request_text[:70] }}{% if r.request_text|length > 70 %}…{% endif %}</td>
+    <td class="mono">{{ r.current_step }}</td>
+    <td><span class="tag {% if r.status.value=='completed' %}ok{% elif r.status.value=='blocked' %}stop{% else %}warn{% endif %}">{{ r.status.value }}</span></td>
+    <td><a href="/workflow/{{ r.id }}">View</a></td>
+  </tr>{% endfor %}</table>
+  {% else %}<p class="muted">No requests yet.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Reminders</h2>
+  {% if reminders %}<table><tr><th>When</th><th>Type</th><th>Message</th></tr>
+  {% for rm in reminders %}<tr>
+    <td>{{ rm.scheduled_at.strftime('%d %b %H:%M') }}</td>
+    <td><span class="tag info">{{ rm.reminder_type }}</span></td>
+    <td>{{ rm.message }}</td>
+  </tr>{% endfor %}</table>
+  {% else %}<p class="muted">No reminders scheduled.</p>{% endif %}
+</div>
+{% endblock %}
