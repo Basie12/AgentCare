@@ -68,6 +68,14 @@ python -m scripts.check_llm
 ```
 
 It prints the models your key can actually reach, warns if `LLM_MODEL` isn't among them, and sends one live request through the same `complete()` path the agents use.
+----
+# AgentCare Demo
+
+Production-ready Multi-Agent AI Platform for Hospital Administration
+
+🎥 **Live Demo:** https://youtu.be/Rz6tfnwkTXE?si=WdS7qM9yU0JxSgFz
+
+---
 
 ---
 
