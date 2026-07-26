@@ -1,0 +1,168 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------
+  # The suite runs with no API key. tests/conftest.py blanks every provider
+  # credential, so agents exercise their deterministic fallbacks. That makes
+  # CI free, fast and reproducible — and it is the honest environment, since
+  # a runner has no secrets.
+  # ---------------------------------------------------------------------
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run test suite
+        run: pytest -q --tb=short
+
+  # ---------------------------------------------------------------------
+  # Proves the README actually works on a machine that has never seen this
+  # project. This is the check that catches "works on my laptop" — a missing
+  # directory, an undeclared dependency, an import that only resolves locally.
+  # ---------------------------------------------------------------------
+  fresh-clone:
+    name: fresh clone setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Seed the database exactly as the README instructs
+        run: python -m app.db.seed
+
+      - name: Confirm the app boots and authenticates without an API key
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from app.main import app
+
+          client = TestClient(app)
+
+          health = client.get("/health").json()
+          assert health["status"] == "ok", health
+          assert health["llm_configured"] is False, "CI should have no key configured"
+
+          login = client.post(
+              "/login",
+              data={"email": "patient@demo.local", "password": "patient123"},
+              follow_redirects=False,
+          )
+          assert login.status_code == 302, f"login failed: {login.status_code}"
+
+          # A patient must not reach the staff console.
+          forbidden = client.get("/staff", follow_redirects=False)
+          assert forbidden.status_code == 403, f"RBAC not enforced: {forbidden.status_code}"
+
+          print("boot OK — health, auth and RBAC all behave without an LLM")
+          PY
+
+      - name: Confirm the tool registry is fully wired
+        run: |
+          python - <<'PY'
+          from app.tools import documents, hospital, oversight  # noqa: F401
+          from app.tools.registry import REGISTRY
+
+          assert len(REGISTRY) >= 15, f"only {len(REGISTRY)} tools registered"
+          print(f"{len(REGISTRY)} tools registered: {', '.join(sorted(REGISTRY))}")
+          PY
+
+  # ---------------------------------------------------------------------
+  # Challenge RULE-6: no real credentials in the repository.
+  # ---------------------------------------------------------------------
+  secrets-scan:
+    name: no committed secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, not just the tip
+
+      - name: Fail if .env was ever committed
+        run: |
+          if git log --all --pretty=format: --name-only | sort -u | grep -qx ".env"; then
+            echo "::error::.env appears in git history"
+            exit 1
+          fi
+          echo ".env has never been committed"
+
+      - name: Fail on API-key patterns in tracked files or history
+        run: |
+          PATTERN='(gsk_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{30,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,})'
+          if git grep -InE "$PATTERN" -- . ':!.github/workflows/'; then
+            echo "::error::API-key-shaped string found in tracked files"
+            exit 1
+          fi
+          if git log --all -p | grep -aoE "$PATTERN" | sort -u | grep .; then
+            echo "::error::API-key-shaped string found in git history — rotate those keys"
+            exit 1
+          fi
+          echo "no API-key patterns found"
+
+      - name: Fail if .env.example has filled-in values
+        run: |
+          if grep -qE "^(GROQ|OPENAI|ANTHROPIC|GOOGLE|OPENROUTER|LLM)_API_KEY=.+|^JWT_SECRET=.+" .env.example; then
+            echo "::error::.env.example contains real values — it must be a blank template"
+            exit 1
+          fi
+          echo ".env.example is a clean template"
+
+  # ---------------------------------------------------------------------
+  # Mirrors the challenge's own critical checks so failures surface here
+  # rather than on the submission dashboard.
+  # ---------------------------------------------------------------------
+  eligibility:
+    name: challenge critical checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: All Python compiles
+        run: python -m compileall -q app tests scripts
+
+      - name: An LLM client is declared
+        run: |
+          grep -Eiq '^(groq|openai|anthropic|langchain|langgraph|crewai|autogen)' requirements.txt \
+            || { echo "::error::no LLM client in requirements.txt"; exit 1; }
+          echo "LLM client declared"
+
+      - name: Required submission files are present
+        run: |
+          for f in README.md requirements.txt .env.example .gitignore; do
+            test -f "$f" || { echo "::error::missing $f"; exit 1; }
+          done
+          echo "all required files present"
