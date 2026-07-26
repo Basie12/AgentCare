@@ -74,51 +74,6 @@ It prints the models your key can actually reach, warns if `LLM_MODEL` isn't amo
 ## Architecture
 ![Workflow](docs/images/architecture-overview.png)
 
-```
-                                START
-                                  │
-                          ┌───────▼────────┐
-                          │   profile      │  resolve the patient record
-                          └───────┬────────┘
-                          ┌───────▼────────┐
-                          │    safety      │  rules first, LLM may only escalate
-                          └───┬────────┬───┘
-                        blocked        proceed
-                          │              │
-                 ┌────────▼──────┐ ┌─────▼──────┐
-                 │  blocked_exit │ │   intent   │  book | reschedule | cancel
-                 └────────┬──────┘ └─────┬──────┘
-                          │        ┌─────▼──────┐
-                          │        │   routing  │  request → department
-                          │        └─────┬──────┘
-                          │     confidence < 0.65
-                          │        ┌─────┴──────────┐
-                          │       yes              no
-                          │        │                │
-                          │  ┌─────▼───────────┐    │
-                          │  │ human_approval  │◄───┼── interrupt(): state
-                          │  └──┬───────────┬──┘    │   checkpointed, process
-                          │ approved    rejected    │   may exit and resume
-                          │     │           │       │
-                          │     │  ┌────────▼─────┐ │
-                          │     │  │rejected_exit │ │
-                          │     │  └────────┬─────┘ │
-                          │  ┌──▼───────────┴───────▼──┐
-                          │  │      appointment        │  slots → conflicts →
-                          │  └──────────┬──────────────┘  book/reschedule/cancel
-                          │  ┌──────────▼──────────────┐
-                          │  │       document          │  checksum → classify →
-                          │  └──────────┬──────────────┘  map → gaps
-                          │  ┌──────────▼──────────────┐
-                          │  │       followup          │  reminders + tasks
-                          │  └──────────┬──────────────┘
-                          │  ┌──────────▼──────────────┐
-                          │  │     coordinator         │  validate completion →
-                          │  └──────────┬──────────────┘  output guard →
-                          │             │                 confirmation from
-                          └─────────────┴───► END         persisted records
-```
-
 State is checkpointed to SQLite after **every** node. When `human_approval` calls `interrupt()`, the run is durably paused — you can kill the server, restart it, and the workflow still resumes from that exact checkpoint once a staff member records a decision.
 
 ### Agents
