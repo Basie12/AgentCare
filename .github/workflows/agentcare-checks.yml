@@ -1,39 +1,71 @@
-# Placeholder. REPLACE this file with the official workflow from:
-# https://careerapi-production.krishnaik.in/api/ci/hackathons/agentcare-build-challenge-2026/workflow.yml
-# Then add SUBMISSION_TOKEN under Settings -> Secrets and variables -> Actions.
-#
-# The job below mirrors the two critical checks locally so you catch failures
-# before pushing.
-name: agentcare-checks
+name: AgentCare Checks
 
-on: [push, pull_request]
+on: [push]
+
+permissions:
+  id-token: write      # required — without this the OIDC env vars do not exist
+  contents: read
+
+# A newer push supersedes an older run. The server also rejects stale runs by run_id,
+# but cancelling here saves runner minutes.
+concurrency:
+  group: agentcare-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Where the API actually lives. This is the only value that changes between environments.
+  API_BASE: https://careerapi-production.krishnaik.in
+  # Opaque identifier stamped into the OIDC token. NOT a URL that gets fetched, and NOT
+  # environment-specific — the server accepts this exact string everywhere. Do not change it.
+  OIDC_AUDIENCE: https://career.krishnaik.in
+  HACKATHON: agentcare-build-challenge-2026
 
 jobs:
-  local-mirror:
+  checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
-      - name: Critical check 1 — all Python compiles
-        run: python -m compileall -q app tests
+      # No extra dependencies: these checks use only the Python standard library.
 
-      - name: Critical check 2 — an LLM client is declared
+      - name: Request GitHub OIDC token
+        id: oidc
         run: |
-          grep -Eiq '^(groq|openai|anthropic|langchain|langgraph|crewai|autogen)' requirements.txt \
-            && echo "LLM client found" \
-            || (echo "::error::no LLM client in requirements.txt" && exit 1)
+          TOKEN=$(curl -sS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=${{ env.OIDC_AUDIENCE }}" \
+            | jq -r '.value')
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "::error::Could not get an OIDC token. Check 'permissions: id-token: write'."
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Advisory — .env is not committed
+      - name: Download checks
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+          SUBMISSION_TOKEN: ${{ secrets.SUBMISSION_TOKEN }}
         run: |
-          test ! -f .env && echo ".env not committed" || (echo "::error::.env is committed" && exit 1)
+          # The script is served only to GitHub Actions, and only for the hackathon this
+          # token is registered for. Print the server's reason on failure instead of a
+          # bare exit code.
+          HTTP=$(curl -sS -o checks.py -w '%{http_code}' \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            -H "X-Submission-Token: $SUBMISSION_TOKEN" \
+            "$API_BASE/api/ci/hackathons/$HACKATHON/checks.py")
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::Could not download checks (HTTP $HTTP): $(cat checks.py)"
+            exit 1
+          fi
 
-      - name: Advisory — .env.example and README exist
-        run: test -f .env.example && test -f README.md
-
-      - name: Install and test
-        run: |
-          pip install -r requirements.txt
-          pytest -q
+      - name: Run checks
+        env:
+          WEBHOOK_URL: ${{ env.API_BASE }}/api/ci/report
+          SUBMISSION_TOKEN: ${{ secrets.SUBMISSION_TOKEN }}
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+        run: python checks.py
