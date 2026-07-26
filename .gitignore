@@ -5,40 +5,15 @@
 *.pem
 *.key
 
-# Data & uploads (synthetic, regenerate with the seed script)
-data/
-storage/
-*.db
-*.sqlite
-*.sqlite3
-
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-env/
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Editors / OS
-.vscode/
-.idea/
-.DS_Store
-# Secrets — never commit
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-
-# Data & uploads (synthetic, regenerate with the seed script)
-data/
-storage/
+# Data & uploads (synthetic — regenerate with the seed script).
+# The directories themselves are kept so a fresh clone runs immediately;
+# only their contents are ignored.
+data/*
+!data/.gitkeep
+storage/*
+!storage/documents/
+storage/documents/*
+!storage/documents/.gitkeep
 *.db
 *.sqlite
 *.sqlite3

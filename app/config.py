@@ -69,3 +69,31 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+def _ensure_runtime_directories(config: "Settings") -> None:
+    """Create runtime directories if they are missing.
+
+    A fresh clone has no data/ or storage/ — their contents are gitignored —
+    and SQLite will not create a missing parent directory. It fails with
+    "unable to open database file" on the very first setup command.
+    """
+    targets = [
+        Path(config.document_storage_dir),
+        Path(config.checkpoint_db_path).parent,
+    ]
+
+    url = config.database_url
+    if url.startswith("sqlite"):
+        raw = url.split("///", 1)[-1]
+        if raw and raw != ":memory:":
+            targets.append(Path(raw).expanduser().resolve().parent)
+
+    for target in targets:
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+
+
+_ensure_runtime_directories(settings)
