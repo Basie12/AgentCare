@@ -72,6 +72,7 @@ It prints the models your key can actually reach, warns if `LLM_MODEL` isn't amo
 ---
 
 ## Architecture
+![Workflow](docs/images/architecture-overview.png)
 
 ```
                                 START
