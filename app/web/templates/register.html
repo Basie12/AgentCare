@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block content %}
+<div class="card" style="max-width:560px;margin:2rem auto">
+  <h1>Create your patient account</h1>
+  <p class="muted">Registration only. AgentCare handles hospital administration — it does not provide medical advice.</p>
+  {% if error %}<div class="banner stop">{{ error }}</div>{% endif %}
+  <form method="post" action="/register">
+    <h3>Full name *</h3>
+    <input name="name" required value="{{ form.get('name','') }}" autofocus>
+    <div class="row">
+      <div><h3>Email *</h3><input name="email" type="email" required value="{{ form.get('email','') }}"></div>
+      <div><h3>Password *</h3><input name="password" type="password" required minlength="8"
+        placeholder="At least 8 characters"></div>
+    </div>
+    <div class="row">
+      <div><h3>Date of birth</h3><input name="date_of_birth" type="date" value="{{ form.get('date_of_birth','') }}"></div>
+      <div><h3>Phone</h3><input name="phone" value="{{ form.get('phone','') }}" placeholder="410-555-0100"></div>
+    </div>
+    <div class="row">
+      <div><h3>Preferred language</h3><input name="preferred_language" value="{{ form.get('preferred_language','en') }}"></div>
+      <div><h3>Emergency contact</h3><input name="emergency_contact" value="{{ form.get('emergency_contact','') }}"
+        placeholder="Name and phone"></div>
+    </div>
+    <p><button type="submit">Create account</button></p>
+  </form>
+  <p class="muted">Already registered? <a href="/">Sign in</a></p>
+</div>
+{% endblock %}

@@ -5,8 +5,8 @@
 *.pem
 *.key
 
-# Data & uploads (synthetic — regenerate with the seed script).
-# The directories themselves are kept so a fresh clone runs immediately;
+# Data & uploads (synthetic, regenerate with the seed script).
+# The directories themselves are kept so a fresh clone can run immediately;
 # only their contents are ignored.
 data/*
 !data/.gitkeep

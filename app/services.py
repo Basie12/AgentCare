@@ -33,8 +33,10 @@ from app.db.models import (
 logger = logging.getLogger(__name__)
 
 SERIALISABLE_KEYS = [
-    "safety_verdict", "safety_rule", "blocked", "department", "routing_confidence",
+    "patient", "safety_verdict", "safety_rule", "blocked", "department", "routing_confidence",
+    "completion",
     "routing_rationale", "routing_alternatives", "timeframe", "timeframe_note",
+    "appointment_intent", "existing_appointments",
     "available_slots", "appointment",
     "documents", "duplicates", "missing_documents", "reminders", "requires_approval",
     "approval_reason", "approval_decision", "escalation_id", "current_step",

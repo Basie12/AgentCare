@@ -1,0 +1,36 @@
+{% extends "base.html" %}{% block content %}
+<h1>Reschedule appointment</h1>
+
+<div class="card">
+  <h2>Current appointment</h2>
+  <table>
+    <tr><th>Department</th><td>{{ department.name }}</td></tr>
+    <tr><th>Doctor</th><td>{{ doctor.name }}</td></tr>
+    <tr><th>Currently</th><td><strong>{{ current_slot.start_time.strftime('%a %d %b %Y, %-I:%M %p') }}</strong></td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Choose a new time</h2>
+  {% if slots %}
+    <p class="muted">Open slots in {{ department.name }} over the next 30 days. Your current slot is released only if the move succeeds.</p>
+    <form method="post" action="/appointment/{{ appointment.id }}/reschedule">
+      <table>
+        <tr><th></th><th>When</th><th>Doctor</th></tr>
+        {% for s in slots %}
+        <tr>
+          <td><input type="radio" name="slot_id" value="{{ s.slot_id }}" {% if loop.first %}checked{% endif %} style="width:auto"></td>
+          <td>{{ s.start_display }}</td>
+          <td>{{ s.doctor_name }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      <p><button type="submit">Move appointment</button>
+         <a href="/patient"><button type="button" class="ghost">Back</button></a></p>
+    </form>
+  {% else %}
+    <p class="muted">No alternative slots are open in {{ department.name }} at the moment. Hospital staff can look for you.</p>
+    <p><a href="/patient"><button type="button" class="ghost">Back</button></a></p>
+  {% endif %}
+</div>
+{% endblock %}

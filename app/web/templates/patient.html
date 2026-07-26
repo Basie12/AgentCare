@@ -16,10 +16,20 @@
 <div class="row">
 <div class="card">
   <h2>Appointments</h2>
-  {% if appointments %}<table><tr><th>When</th><th>Doctor</th><th>Status</th></tr>
+  {% if appointments %}<table><tr><th>When</th><th>Doctor</th><th>Status</th><th>Actions</th></tr>
   {% for appt, slot, doc in appointments %}<tr>
-    <td>{{ slot.start_time.strftime('%a %d %b, %H:%M') }}</td><td>{{ doc.name }}</td>
-    <td><span class="tag {{ 'ok' if appt.status.value in ['confirmed','rescheduled'] else 'warn' }}">{{ appt.status.value }}</span></td>
+    <td>{{ slot.start_time.strftime('%a %d %b %Y, %-I:%M %p') }}</td><td>{{ doc.name }}</td>
+    <td><span class="tag {% if appt.status.value in ['confirmed','rescheduled'] %}ok{% elif appt.status.value == 'cancelled' %}stop{% else %}warn{% endif %}">{{ appt.status.value }}</span></td>
+    <td>
+      {% if appt.status.value in ['pending','confirmed','rescheduled'] %}
+        <a href="/appointment/{{ appt.id }}/reschedule">Reschedule</a>
+        &nbsp;·&nbsp;
+        <form method="post" action="/appointment/{{ appt.id }}/cancel" style="display:inline"
+              onsubmit="return confirm('Cancel this appointment? The slot will be released.')">
+          <button type="submit" class="ghost" style="padding:.15rem .5rem;font-size:.8rem">Cancel</button>
+        </form>
+      {% else %}<span class="muted">—</span>{% endif %}
+    </td>
   </tr>{% endfor %}</table>
   {% else %}<p class="muted">Nothing booked yet.</p>{% endif %}
 </div>
@@ -46,6 +56,21 @@
     <td><a href="/workflow/{{ r.id }}">View</a></td>
   </tr>{% endfor %}</table>
   {% else %}<p class="muted">No requests yet.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Your profile</h2>
+  <form method="post" action="/patient/profile">
+    <div class="row">
+      <div><h3>Date of birth</h3><input name="date_of_birth" type="date" value="{{ profile.date_of_birth or '' }}"></div>
+      <div><h3>Phone</h3><input name="phone" value="{{ profile.phone or '' }}"></div>
+    </div>
+    <div class="row">
+      <div><h3>Preferred language</h3><input name="preferred_language" value="{{ profile.preferred_language or 'en' }}"></div>
+      <div><h3>Emergency contact</h3><input name="emergency_contact" value="{{ profile.emergency_contact or '' }}"></div>
+    </div>
+    <p><button type="submit">Save profile</button></p>
+  </form>
 </div>
 
 <div class="card">

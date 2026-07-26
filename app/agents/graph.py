@@ -4,8 +4,12 @@ The workflow is a conditional state machine, not a chain:
 
               START
                 |
+           [profile] ----- resolve the patient record
+                |
             [safety] ------ blocked ------> [blocked_exit] -> END
                 | proceed
+            [intent] ------ book | reschedule | cancel
+                |
             [routing] ---- low confidence / sensitive ----+
                 |                                         |
                 |                              [human_approval]  <-- interrupt()
@@ -42,6 +46,8 @@ from app.agents.nodes import (
     coordinator_agent,
     document_agent,
     followup_agent,
+    intent_agent,
+    profile_agent,
     routing_agent,
     safety_agent,
 )
@@ -115,7 +121,7 @@ def rejected_exit(state: AgentCareState) -> dict:
 # Conditional edges
 # ---------------------------------------------------------------------------
 def after_safety(state: AgentCareState) -> str:
-    return "blocked_exit" if state.get("blocked") else "routing"
+    return "blocked_exit" if state.get("blocked") else "intent"
 
 
 def after_routing(state: AgentCareState) -> str:
@@ -132,7 +138,9 @@ def after_approval(state: AgentCareState) -> str:
 def build_graph(checkpointer: Any | None = None):
     builder = StateGraph(AgentCareState)
 
+    builder.add_node("profile", profile_agent)
     builder.add_node("safety", safety_agent)
+    builder.add_node("intent", intent_agent)
     builder.add_node("routing", routing_agent)
     builder.add_node("human_approval", human_approval)
     builder.add_node("appointment", appointment_agent)
@@ -142,10 +150,12 @@ def build_graph(checkpointer: Any | None = None):
     builder.add_node("blocked_exit", blocked_exit)
     builder.add_node("rejected_exit", rejected_exit)
 
-    builder.add_edge(START, "safety")
+    builder.add_edge(START, "profile")
+    builder.add_edge("profile", "safety")
     builder.add_conditional_edges(
-        "safety", after_safety, {"blocked_exit": "blocked_exit", "routing": "routing"}
+        "safety", after_safety, {"blocked_exit": "blocked_exit", "intent": "intent"}
     )
+    builder.add_edge("intent", "routing")
     builder.add_conditional_edges(
         "routing",
         after_routing,

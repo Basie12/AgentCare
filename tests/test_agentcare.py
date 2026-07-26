@@ -16,6 +16,7 @@ from app.db.models import (
     EscalationStatus,
     PatientProfile,
     Role,
+    ToolInvocation,
     User,
     WorkflowRun,
     WorkflowStatus,
@@ -677,3 +678,416 @@ def test_unclassifiable_document_does_report_fallback(db, monkeypatch):
         uploaded_files=[{"filename": "scan001.bin", "content_b64": payload}],
     )
     assert _doc_trace(run)["used_fallback"] is True
+
+
+# ---------------------------------------------------------------------------
+# Patient registration (required scope step 1)
+# ---------------------------------------------------------------------------
+def _unique_email(prefix: str) -> str:
+    import uuid
+    return f"{prefix}{uuid.uuid4().hex[:8]}@demo.local"
+
+
+def test_patient_can_self_register_and_is_logged_in(db):
+    client = TestClient(app)
+    email = _unique_email("reg")
+
+    response = client.post(
+        "/register",
+        data={
+            "name": "Registered Patient", "email": email, "password": "strongpass123",
+            "date_of_birth": "1990-04-12", "phone": "410-555-0177",
+            "preferred_language": "en", "emergency_contact": "Kin (410-555-0188)",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == "/patient"
+    assert "access_token" in response.headers.get("set-cookie", "")
+
+    user = db.scalar(select(User).where(User.email == email))
+    assert user is not None and user.role is Role.PATIENT
+    profile = db.query(PatientProfile).filter(PatientProfile.user_id == user.id).first()
+    assert profile is not None, "registration must create a PatientProfile"
+    assert profile.phone == "410-555-0177"
+
+    # The new account can immediately use the system.
+    assert client.get("/patient").status_code == 200
+
+
+def test_registration_stores_a_hash_not_the_password(db):
+    client = TestClient(app)
+    email = _unique_email("hash")
+    client.post("/register", data={"name": "H", "email": email, "password": "strongpass123"})
+
+    user = db.scalar(select(User).where(User.email == email))
+    assert "strongpass123" not in user.password_hash
+    assert user.password_hash.startswith("pbkdf2_sha256$")
+
+
+def test_registration_rejects_duplicate_email_and_weak_password():
+    client = TestClient(app)
+    email = _unique_email("dup")
+    assert client.post(
+        "/register", data={"name": "A", "email": email, "password": "strongpass123"}
+    ).status_code in (200, 302)
+
+    duplicate = TestClient(app).post(
+        "/register", data={"name": "B", "email": email, "password": "strongpass123"}
+    )
+    assert duplicate.status_code == 400
+
+    weak = TestClient(app).post(
+        "/register", data={"name": "C", "email": _unique_email("weak"), "password": "short"}
+    )
+    assert weak.status_code == 400
+
+
+def test_registered_patient_can_update_their_profile(db):
+    client = TestClient(app)
+    email = _unique_email("prof")
+    client.post("/register", data={"name": "P", "email": email, "password": "strongpass123"})
+
+    assert client.post(
+        "/patient/profile",
+        data={"date_of_birth": "1985-01-01", "phone": "410-555-2222",
+              "preferred_language": "es", "emergency_contact": "Updated Contact"},
+        follow_redirects=False,
+    ).status_code == 302
+
+    user = db.scalar(select(User).where(User.email == email))
+    db.expire_all()
+    profile = db.query(PatientProfile).filter(PatientProfile.user_id == user.id).first()
+    assert profile.preferred_language == "es"
+    assert profile.emergency_contact == "Updated Contact"
+
+
+# ---------------------------------------------------------------------------
+# Reschedule and cancel (core journey step 5)
+# ---------------------------------------------------------------------------
+from app.agents.intent import AppointmentIntent, detect_intent  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("I need a Cardiology follow-up next week", AppointmentIntent.BOOK),
+        ("Book me into General Surgery", AppointmentIntent.BOOK),
+        ("Can you reschedule my appointment to Friday?", AppointmentIntent.RESCHEDULE),
+        ("I need to move my appointment to next week", AppointmentIntent.RESCHEDULE),
+        ("I can no longer make Tuesday", AppointmentIntent.RESCHEDULE),
+        ("Cancel my Tuesday slot and book Thursday instead", AppointmentIntent.RESCHEDULE),
+        ("Please cancel my appointment", AppointmentIntent.CANCEL),
+        ("I no longer need the appointment", AppointmentIntent.CANCEL),
+    ],
+)
+def test_intent_detection(text, expected):
+    assert detect_intent(text) is expected
+
+
+def test_ambiguous_text_defaults_to_book_not_cancel():
+    """Erring toward BOOK creates a removable extra; erring toward CANCEL destroys care."""
+    for text in ["appointment", "I need help with my visit", "cardiology please"]:
+        assert detect_intent(text) is AppointmentIntent.BOOK
+
+
+def _agent_lifecycle_patient(db):
+    import uuid
+    return _throwaway_patient(db, f"life{uuid.uuid4().hex[:6]}")
+
+
+def test_agent_can_book_then_reschedule_then_cancel(db):
+    profile = _agent_lifecycle_patient(db)
+
+    booked = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="I need a Cardiology follow-up next week",
+    )
+    assert booked.state["appointment_intent"] == "book"
+    appointment_id = booked.state["appointment"]["appointment_id"]
+    original_start = booked.state["appointment"]["start_time"]
+
+    moved = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="Can you reschedule my Cardiology appointment to Friday?",
+    )
+    assert moved.state["appointment_intent"] == "reschedule"
+    assert moved.state["appointment"]["rescheduled"] is True
+    assert moved.state["appointment"]["start_time"] != original_start
+    db.expire_all()
+    assert db.get(Appointment, appointment_id).status is AppointmentStatus.RESCHEDULED
+
+    cancelled = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="Please cancel my appointment",
+    )
+    assert cancelled.state["appointment_intent"] == "cancel"
+    db.expire_all()
+    assert db.get(Appointment, appointment_id).status is AppointmentStatus.CANCELLED
+
+
+def test_cancelling_with_nothing_booked_is_handled_gracefully(db):
+    profile = _agent_lifecycle_patient(db)
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="Please cancel my appointment",
+    )
+    assert run.status is WorkflowStatus.COMPLETED, "must not crash or hang"
+    assert "no active appointment" in run.state["final_message"].lower()
+
+
+def test_cancel_does_not_require_a_department(db):
+    """'Cancel my appointment' names no department; it must not escalate for that."""
+    profile = _agent_lifecycle_patient(db)
+    start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="I need a Dermatology appointment next week",
+    )
+    booked = db.scalar(select(Appointment).where(Appointment.patient_id == profile.id))
+
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="Please cancel my appointment",
+    )
+    # It must complete without ever asking a human which department this is.
+    assert run.status is WorkflowStatus.COMPLETED
+    assert run.state["appointment_intent"] == "cancel"
+    assert not run.state.get("requires_approval"), "cancel must not need a department"
+
+    db.expire_all()
+    assert db.get(Appointment, booked.id).status is AppointmentStatus.CANCELLED
+
+
+def test_ambiguous_cancel_escalates_rather_than_guessing(db):
+    """Two live appointments and no way to tell which — a human decides."""
+    profile = _agent_lifecycle_patient(db)
+    start_workflow(db, patient_id=profile.id, actor_id=profile.user_id,
+                   request_text="I need a Radiology appointment next week")
+    start_workflow(db, patient_id=profile.id, actor_id=profile.user_id,
+                   request_text="I need an Ophthalmology appointment in two weeks")
+
+    live = db.scalars(
+        select(Appointment).where(
+            Appointment.patient_id == profile.id,
+            Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.RESCHEDULED]),
+        )
+    ).all()
+    if len(live) < 2:
+        pytest.skip("needed two live appointments to test ambiguity")
+
+    run = start_workflow(db, patient_id=profile.id, actor_id=profile.user_id,
+                         request_text="Please cancel my appointment")
+
+    assert run.state["requires_approval"] is True
+    escalation = db.scalars(
+        select(Escalation).where(
+            Escalation.workflow_run_id == run.id,
+            Escalation.category == "cancel_ambiguous",
+        )
+    ).first()
+    assert escalation is not None, "ambiguity must raise an escalation, not a guess"
+
+    for appointment in live:
+        db.refresh(appointment)
+        assert appointment.status is not AppointmentStatus.CANCELLED, "must not guess"
+
+
+def test_cancelled_appointment_gets_no_reminders(db):
+    profile = _agent_lifecycle_patient(db)
+    start_workflow(db, patient_id=profile.id, actor_id=profile.user_id,
+                   request_text="I need an ENT appointment next week")
+    run = start_workflow(db, patient_id=profile.id, actor_id=profile.user_id,
+                         request_text="Please cancel my appointment")
+    assert run.state["reminders"] == []
+
+
+# --- UI routes ------------------------------------------------------------
+def _registered_client(db):
+    client = TestClient(app)
+    email = _unique_email("ui")
+    client.post("/register", data={"name": "UI", "email": email, "password": "strongpass123"})
+    user = db.scalar(select(User).where(User.email == email))
+    profile = db.query(PatientProfile).filter(PatientProfile.user_id == user.id).first()
+    return client, profile
+
+
+def test_ui_reschedule_and_cancel(db):
+    import re
+
+    client, profile = _registered_client(db)
+    client.post("/patient/request", data={"request_text": "I need a Cardiology follow-up next week"})
+
+    appointment = db.scalar(select(Appointment).where(Appointment.patient_id == profile.id))
+    assert appointment is not None
+
+    page = client.get(f"/appointment/{appointment.id}/reschedule")
+    assert page.status_code == 200
+    slot_id = re.search(r'name="slot_id" value="(\w+)"', page.text).group(1)
+
+    assert client.post(
+        f"/appointment/{appointment.id}/reschedule",
+        data={"slot_id": slot_id}, follow_redirects=False,
+    ).status_code == 302
+    db.expire_all()
+    assert db.get(Appointment, appointment.id).status is AppointmentStatus.RESCHEDULED
+
+    assert client.post(
+        f"/appointment/{appointment.id}/cancel", follow_redirects=False
+    ).status_code == 302
+    db.expire_all()
+    assert db.get(Appointment, appointment.id).status is AppointmentStatus.CANCELLED
+
+
+def test_patient_cannot_reschedule_or_cancel_someone_elses_appointment(db):
+    client, profile = _registered_client(db)
+    client.post("/patient/request", data={"request_text": "I need a Radiology appointment next week"})
+    appointment = db.scalar(select(Appointment).where(Appointment.patient_id == profile.id))
+
+    intruder = TestClient(app)
+    intruder.post("/login", data={"email": "patient@demo.local", "password": "patient123"})
+
+    assert intruder.get(
+        f"/appointment/{appointment.id}/reschedule", follow_redirects=False
+    ).status_code == 403
+    assert intruder.post(
+        f"/appointment/{appointment.id}/cancel", follow_redirects=False
+    ).status_code == 403
+
+    db.expire_all()
+    assert db.get(Appointment, appointment.id).status is not AppointmentStatus.CANCELLED
+
+
+# ---------------------------------------------------------------------------
+# Architecture: the graph must match the documented workflow diagram
+# ---------------------------------------------------------------------------
+def _nodes_run(run) -> list[str]:
+    return [entry["agent"] for entry in run.state.get("agent_log", [])]
+
+
+def test_nodes_execute_in_the_documented_order(db):
+    profile = _throwaway_patient(db, f"ord{__import__('uuid').uuid4().hex[:6]}")
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="I need a Cardiology follow-up next week",
+    )
+    assert _nodes_run(run) == [
+        "profile", "safety", "intent", "routing",
+        "appointment", "document", "followup", "coordinator",
+    ]
+
+
+def test_profile_node_resolves_the_patient_record(db):
+    profile = _throwaway_patient(db, f"prn{__import__('uuid').uuid4().hex[:6]}")
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="I need an ENT appointment next week",
+    )
+    assert run.state["patient"] is not None
+    assert run.state["patient"]["patient_id"] == profile.id
+
+
+def test_get_patient_record_is_actually_invoked(db):
+    """The tool must be called by an agent, not merely registered."""
+    profile = _throwaway_patient(db, f"inv{__import__('uuid').uuid4().hex[:6]}")
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="I need a Radiology appointment next week",
+    )
+    calls = db.scalars(
+        select(ToolInvocation).where(
+            ToolInvocation.workflow_run_id == run.id,
+            ToolInvocation.tool_name == "get_patient_record",
+        )
+    ).all()
+    assert calls, "get_patient_record must be invoked, not just exist"
+    assert calls[0].agent_name == "profile"
+
+
+def test_safety_block_stops_before_intent_and_routing(db):
+    profile = _throwaway_patient(db, f"blk{__import__('uuid').uuid4().hex[:6]}")
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="I have severe chest pain right now",
+    )
+    nodes = _nodes_run(run)
+    assert nodes == ["profile", "safety"], f"blocked run should stop early, got {nodes}"
+    assert "routing" not in nodes and "appointment" not in nodes
+
+
+def test_intent_is_decided_once_and_read_downstream(db):
+    profile = _throwaway_patient(db, f"int{__import__('uuid').uuid4().hex[:6]}")
+    start_workflow(db, patient_id=profile.id, actor_id=profile.user_id,
+                   request_text="I need a Dermatology appointment next week")
+
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="Please reschedule my appointment to Friday",
+    )
+    assert "intent" in _nodes_run(run)
+    assert run.state["appointment_intent"] == "reschedule"
+
+
+# ---------------------------------------------------------------------------
+# Coordinator completion validation
+# ---------------------------------------------------------------------------
+def test_completion_validation_passes_on_a_clean_booking(db):
+    profile = _throwaway_patient(db, f"cmp{__import__('uuid').uuid4().hex[:6]}")
+    payload = base64.b64encode(b"REFERRAL LETTER completion validation test").decode()
+
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="I need a Cardiology follow-up next week",
+        uploaded_files=[{"filename": "ref.txt", "content_b64": payload}],
+    )
+    completion = run.state["completion"]
+    assert completion["complete"] is True
+    names = {c["check"] for c in completion["checks"]}
+    assert {"appointment_booked", "appointment_persisted",
+            "documents_accounted_for", "reminders_scheduled"} <= names
+
+
+def test_completion_verifies_the_appointment_against_the_database(db):
+    """State claiming a booking is not enough — the row must be readable."""
+    profile = _throwaway_patient(db, f"per{__import__('uuid').uuid4().hex[:6]}")
+    run = start_workflow(
+        db, patient_id=profile.id, actor_id=profile.user_id,
+        request_text="I need an Ophthalmology appointment next week",
+    )
+    persisted = next(
+        c for c in run.state["completion"]["checks"] if c["check"] == "appointment_persisted"
+    )
+    assert persisted["ok"] is True
+    assert db.get(Appointment, run.state["appointment"]["appointment_id"]) is not None
+
+
+def test_completion_check_matches_the_requested_operation(db):
+    profile = _throwaway_patient(db, f"opm{__import__('uuid').uuid4().hex[:6]}")
+    start_workflow(db, patient_id=profile.id, actor_id=profile.user_id,
+                   request_text="I need a Paediatrics appointment next week")
+
+    cancelled = start_workflow(db, patient_id=profile.id, actor_id=profile.user_id,
+                               request_text="Please cancel my appointment")
+    names = {c["check"] for c in cancelled.state["completion"]["checks"]}
+    assert "cancellation_applied" in names
+    assert "appointment_booked" not in names, "a cancel must not be graded as a booking"
+
+
+def test_incomplete_workflow_escalates_instead_of_claiming_success(db):
+    """Validation is only useful if a failure actually raises a flag."""
+    from app.agents import nodes as nodes_module
+
+    profile = _throwaway_patient(db, f"inc{__import__('uuid').uuid4().hex[:6]}")
+    state = {
+        "workflow_run_id": None,
+        "patient_id": profile.id,
+        "appointment_intent": "book",
+        "appointment": {},
+        "errors": ["appointment: deliberate failure"],
+        "reminders": [],
+        "uploaded_files": [],
+    }
+    completion = nodes_module.validate_completion(state)
+    assert completion["complete"] is False
+    failed = {c["check"] for c in completion["checks"] if not c["ok"]}
+    assert "appointment_booked" in failed
+    assert "no_agent_errors" in failed

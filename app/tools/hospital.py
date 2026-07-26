@@ -26,7 +26,7 @@ from app.tools.registry import ToolResult, tool
 @tool(
     name="get_patient_record",
     description="Fetch a patient profile by patient id, returning contact and profile fields.",
-    agents=["coordinator", "appointment", "document", "followup"],
+    agents=["profile", "coordinator", "appointment", "document", "followup"],
 )
 def get_patient_record(patient_id: str) -> ToolResult:
     with session_scope() as db:
@@ -201,6 +201,49 @@ def book_appointment(patient_id: str, slot_id: str, reason: str = "") -> ToolRes
                 "end_time": slot.end_time.isoformat(),
                 "start_display": slot.start_time.strftime("%a %d %b %Y, %-I:%M %p"),
             },
+        )
+
+
+@tool(
+    name="list_patient_appointments",
+    description="List a patient's appointments, optionally only the live (non-cancelled) ones.",
+    agents=["appointment", "coordinator", "followup"],
+)
+def list_patient_appointments(patient_id: str, active_only: bool = True) -> ToolResult:
+    with session_scope() as db:
+        query = (
+            select(Appointment, AppointmentSlot, Doctor, Department)
+            .join(AppointmentSlot, AppointmentSlot.id == Appointment.slot_id)
+            .join(Doctor, Doctor.id == Appointment.doctor_id)
+            .join(Department, Department.id == Doctor.department_id)
+            .where(Appointment.patient_id == patient_id)
+        )
+        if active_only:
+            query = query.where(
+                Appointment.status.in_(
+                    [
+                        AppointmentStatus.PENDING,
+                        AppointmentStatus.CONFIRMED,
+                        AppointmentStatus.RESCHEDULED,
+                    ]
+                )
+            )
+
+        rows = db.execute(query.order_by(AppointmentSlot.start_time)).all()
+        return ToolResult(
+            ok=True,
+            data=[
+                {
+                    "appointment_id": appt.id,
+                    "status": appt.status.value,
+                    "department": dept.name,
+                    "doctor_name": doctor.name,
+                    "slot_id": slot.id,
+                    "start_time": slot.start_time.isoformat(),
+                    "start_display": slot.start_time.strftime("%a %d %b %Y, %-I:%M %p"),
+                }
+                for appt, slot, doctor, dept in rows
+            ],
         )
 
 

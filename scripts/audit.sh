@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Compact pre-publish audit.
 FAIL=0
 ok(){ printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
 no(){ printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=1; }

@@ -23,6 +23,9 @@ class AgentCareState(TypedDict, total=False):
     request_text: str
     uploaded_files: list[dict]  # [{filename, content_b64}]
 
+    # --- profile agent output ---
+    patient: dict | None
+
     # --- safety agent output ---
     safety_verdict: Literal["proceed", "emergency", "clinical_advice", "sensitive"]
     safety_rule: str | None
@@ -38,6 +41,9 @@ class AgentCareState(TypedDict, total=False):
     # --- appointment agent output ---
     timeframe: dict | None
     timeframe_note: str
+    appointment_intent: str
+    selected_appointment_id: str | None
+    existing_appointments: list[dict]
     available_slots: list[dict]
     selected_slot_id: str | None
     appointment: dict | None
@@ -56,6 +62,9 @@ class AgentCareState(TypedDict, total=False):
     approval_decision: Literal["approved", "rejected"] | None
     escalation_id: str | None
 
+    # --- coordinator validation ---
+    completion: dict | None
+
     # --- bookkeeping ---
     current_step: str
     degraded: bool
@@ -72,6 +81,10 @@ def initial_state(**kwargs: Any) -> AgentCareState:
         "routing_alternatives": [],
         "timeframe": None,
         "timeframe_note": "",
+        "patient": None,
+        "completion": None,
+        "appointment_intent": "book",
+        "existing_appointments": [],
         "available_slots": [],
         "documents": [],
         "duplicates": [],
